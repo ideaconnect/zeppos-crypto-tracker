@@ -9,7 +9,7 @@
  * when the UI is built, so symbol changes later in the session reuse or clear
  * existing pages instead of rebuilding the scroll mode from scratch.
  */
-import { createWidget, widget, align, text_style, prop } from '@zos/ui'
+import { createWidget, deleteWidget, widget, align, text_style, prop } from '@zos/ui'
 import { setScrollMode, SCROLL_MODE_SWIPER } from '@zos/page'
 import { px } from '@zos/utils'
 import { log as Logger } from '@zos/utils'
@@ -43,7 +43,7 @@ const COLOR_UPDATE_FLASH = 0xFFFFFF
 const COLOR_UPDATE_NORMAL = 0x888888
 const REFRESH_INTERVAL = 10000 // 10 seconds
 const FLASH_DURATION = 1200 // ms to show flash color
-const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'TRXUSDT']
+const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'DOGEUSDT', 'SOLUSDT', 'TRXUSDT', 'XRPUSDT']
 
 /**
  * Read the last symbol list saved on the watch.
@@ -151,6 +151,9 @@ function createPageWidgets(pageIndex) {
     // Fallback: place widgets at y-offset directly
     return createPageWidgetsFallback(pageIndex)
   }
+
+  // Keep a reference so destroyUI() can clean up the container.
+  widgets.container = vc
 
   // 1) Symbol name at top
   widgets.symbol = vc.createWidget(widget.TEXT, {
@@ -311,6 +314,32 @@ function createPageWidgetsFallback(pageIndex) {
   return widgets
 }
 
+/**
+ * Tear down all page widgets so the swiper can be reconfigured with a
+ * different page count.  Called from applySymbols() before setupUI().
+ */
+function destroyUI() {
+  for (let i = 0; i < pageWidgets.length; i++) {
+    const w = pageWidgets[i]
+    deleteWidget(w.symbol)
+    deleteWidget(w.price)
+    deleteWidget(w.updateTime)
+    w.changes.forEach(({ label, value }) => {
+      deleteWidget(label)
+      deleteWidget(value)
+    })
+    if (w.container) {
+      deleteWidget(w.container)
+    }
+  }
+  if (emptyStateWidget) {
+    deleteWidget(emptyStateWidget)
+    emptyStateWidget = null
+  }
+  pageWidgets = []
+  uiBuilt = false
+}
+
 function getPriceDirection(currentStr, previousStr) {
   if (!currentStr || !previousStr) return 0
   const current = parseFloat(currentStr)
@@ -406,68 +435,13 @@ Page(
       activeSymbols = newSymbols
       try { localStorage.setItem('selectedSymbols', JSON.stringify(activeSymbols)) } catch (e) {}
 
-      // Hide empty-state widget if it exists
-      if (emptyStateWidget) {
-        emptyStateWidget.setProperty(prop.TEXT, '')
-        emptyStateWidget.setProperty(prop.VISIBLE, false)
+      // Tear down existing UI and rebuild with the correct page count.
+      destroyUI()
+      this.setupUI()
+
+      if (activeSymbols.length > 0) {
+        this.fetchPrices()
       }
-
-      if (activeSymbols.length === 0) {
-        // Keep the existing page references alive even when no symbols are
-        // active, because the swiper cannot be reconfigured at runtime.
-        pageWidgets.forEach((w) => {
-          w.symbol.setProperty(prop.TEXT, '')
-          w.price.setProperty(prop.TEXT, '')
-          w.updateTime.setProperty(prop.TEXT, '')
-          w.changes.forEach(({ label, value }) => {
-            label.setProperty(prop.TEXT, '')
-            value.setProperty(prop.TEXT, '')
-          })
-        })
-        // Show message on first swiper page if available
-        if (pageWidgets.length > 0) {
-          pageWidgets[0].price.setProperty(prop.TEXT, 'Select currencies.')
-          pageWidgets[0].price.setProperty(prop.COLOR, COLOR_NEUTRAL)
-        }
-        return
-      }
-
-      if (pageWidgets.length === 0) {
-        // This only happens on first launch when no local symbols existed yet.
-        // In that case we can still build the swiper once with the new count.
-        uiBuilt = false
-        this.setupUI()
-      } else {
-        // Swiper already configured: reuse existing page widgets and clear any
-        // slots that no longer map to an active symbol.
-        const displayCount = Math.min(activeSymbols.length, pageWidgets.length)
-
-        for (let i = 0; i < displayCount; i++) {
-          pageWidgets[i].symbol.setProperty(prop.TEXT, activeSymbols[i])
-          pageWidgets[i].price.setProperty(prop.TEXT, 'Loading...')
-          pageWidgets[i].price.setProperty(prop.COLOR, 0xFFFFFF)
-          pageWidgets[i].changes.forEach(({ label, value, timeframe }) => {
-            label.setProperty(prop.TEXT, TIMEFRAME_LABELS[timeframe] + ':')
-            label.setProperty(prop.COLOR, CHANGE_LABEL_STYLE.label_color)
-            value.setProperty(prop.TEXT, '---')
-            value.setProperty(prop.COLOR, COLOR_NEUTRAL)
-          })
-          pageWidgets[i].updateTime.setProperty(prop.TEXT, '')
-        }
-
-        // Clear excess pages when count decreased for this session.
-        for (let i = displayCount; i < pageWidgets.length; i++) {
-          pageWidgets[i].symbol.setProperty(prop.TEXT, '')
-          pageWidgets[i].price.setProperty(prop.TEXT, '')
-          pageWidgets[i].updateTime.setProperty(prop.TEXT, '')
-          pageWidgets[i].changes.forEach(({ label, value }) => {
-            label.setProperty(prop.TEXT, '')
-            value.setProperty(prop.TEXT, '')
-          })
-        }
-      }
-
-      this.fetchPrices()
     },
 
     fetchSettings() {
