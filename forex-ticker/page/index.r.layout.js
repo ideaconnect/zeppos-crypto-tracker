@@ -1,10 +1,16 @@
+/*
+ * Round-screen layout constants for the watch page.
+ *
+ * Keeping coordinates in a dedicated file lets page/index.js focus on data
+ * flow and widget updates while the device-specific geometry stays isolated.
+ */
 import { px } from '@zos/utils'
 
-// Round screen: 480x480
+// Amazfit round target used by this project.
 export const DEVICE_WIDTH = 480
 export const DEVICE_HEIGHT = 480
 
-// Symbol name at top
+// Header row.
 export const SYMBOL_STYLE = {
   x: px(0),
   y: px(30),
@@ -14,7 +20,7 @@ export const SYMBOL_STYLE = {
   text_size: px(36),
 }
 
-// Current price - large
+// Primary price readout.
 export const PRICE_STYLE = {
   x: px(0),
   y: px(90),
@@ -24,7 +30,7 @@ export const PRICE_STYLE = {
   text_size: px(48),
 }
 
-// Change rows — timeframe labels & percentages (centered pair)
+// Timeframe label/value pairs arranged around the center line.
 export const CHANGE_LABEL_STYLE = {
   y_start: px(170),
   row_height: px(36),
@@ -37,7 +43,7 @@ export const CHANGE_LABEL_STYLE = {
   label_color: 0xAAAAAA,
 }
 
-// Last update timestamp
+// Footer metadata row.
 export const UPDATE_STYLE = {
   x: px(0),
   y: px(370),
@@ -47,7 +53,7 @@ export const UPDATE_STYLE = {
   text_size: px(18),
 }
 
-// Loading text
+// Shared placeholder style for empty or loading states.
 export const LOADING_STYLE = {
   x: px(0),
   y: px(200),

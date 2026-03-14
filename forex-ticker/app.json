@@ -6,18 +6,20 @@
     "appType": "app",
     "version": {
       "code": 1,
-      "name": "1.0.0"
+      "name": "1.1.0"
     },
     "icon": "icon.png",
     "vender": "IDCT TECH",
     "description": "Cryptocurrencies price tracker for Zepp OS"
   },
-  "permissions": ["data:os.device.info"],
+  "permissions": [
+    "data:os.device.info"
+  ],
   "runtime": {
     "apiVersion": {
-      "compatible": "4.0",
-      "target": "4.0",
-      "minVersion": "4.0"
+      "compatible": "3.5",
+      "target": "3.5",
+      "minVersion": "3.5"
     }
   },
   "targets": {

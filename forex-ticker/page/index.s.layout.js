@@ -1,10 +1,16 @@
+/*
+ * Square-screen layout constants for the watch page.
+ *
+ * These values intentionally differ from the round layout so text remains
+ * centered and readable on the tighter 390x390 surface.
+ */
 import { px } from '@zos/utils'
 
-// Square screen: 390x390
+// Amazfit square target used by this project.
 export const DEVICE_WIDTH = 390
 export const DEVICE_HEIGHT = 390
 
-// Symbol name at top
+// Header row.
 export const SYMBOL_STYLE = {
   x: px(0),
   y: px(85),
@@ -14,7 +20,7 @@ export const SYMBOL_STYLE = {
   text_size: px(30),
 }
 
-// Current price - large
+// Primary price readout.
 export const PRICE_STYLE = {
   x: px(0),
   y: px(130),
@@ -24,7 +30,7 @@ export const PRICE_STYLE = {
   text_size: px(40),
 }
 
-// Change rows — timeframe labels & percentages (centered pair)
+// Timeframe label/value pairs arranged around the center line.
 export const CHANGE_LABEL_STYLE = {
   y_start: px(195),
   row_height: px(32),
@@ -37,7 +43,7 @@ export const CHANGE_LABEL_STYLE = {
   label_color: 0xAAAAAA,
 }
 
-// Last update timestamp
+// Footer metadata row.
 export const UPDATE_STYLE = {
   x: px(0),
   y: px(370),
@@ -47,7 +53,7 @@ export const UPDATE_STYLE = {
   text_size: px(16),
 }
 
-// Loading text
+// Shared placeholder style for empty or loading states.
 export const LOADING_STYLE = {
   x: px(0),
   y: px(230),

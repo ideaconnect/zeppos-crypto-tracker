@@ -1,3 +1,14 @@
+/*
+ * Watch-side page runtime.
+ *
+ * This file owns the on-device UI lifecycle: building swiper pages, applying
+ * the current symbol list, requesting market data from the app-side service,
+ * and refreshing widgets when new data arrives.
+ *
+ * Important runtime constraint: the swiper page count can only be configured
+ * when the UI is built, so symbol changes later in the session reuse or clear
+ * existing pages instead of rebuilding the scroll mode from scratch.
+ */
 import { createWidget, widget, align, text_style, prop } from '@zos/ui'
 import { setScrollMode, SCROLL_MODE_SWIPER } from '@zos/page'
 import { px } from '@zos/utils'
@@ -15,7 +26,7 @@ import {
 
 const logger = Logger.getLogger('crypto-ticker')
 
-// Timeframes to display (in order)
+// Ordered to match the visible rows rendered on each page.
 const TIMEFRAMES = ['1min', '5min', '1h', '12h', '7d']
 const TIMEFRAME_LABELS = {
   '1min': '1m',
@@ -34,7 +45,12 @@ const REFRESH_INTERVAL = 10000 // 10 seconds
 const FLASH_DURATION = 1200 // ms to show flash color
 const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'TRXUSDT']
 
-// Load symbols from device-local storage (synchronous) so setupUI() uses the right count
+/**
+ * Read the last symbol list saved on the watch.
+ *
+ * This must stay synchronous because setupUI() needs the symbol count before
+ * configuring swiper mode during build().
+ */
 function loadSavedSymbols() {
   try {
     const saved = localStorage.getItem('selectedSymbols')
@@ -55,6 +71,9 @@ let refreshTimer = null
 let pricesData = null
 let uiBuilt = false
 
+/**
+ * Format a stringified price into a compact, watch-friendly display value.
+ */
 function formatPrice(priceStr) {
   const num = parseFloat(priceStr)
   if (isNaN(num)) return priceStr
@@ -75,6 +94,9 @@ function formatPrice(priceStr) {
   return formatted
 }
 
+/**
+ * Format a percentage string with a stable sign and fixed precision.
+ */
 function formatPercent(percentStr) {
   const num = parseFloat(percentStr)
   if (isNaN(num)) return percentStr
@@ -82,6 +104,9 @@ function formatPercent(percentStr) {
   return sign + num.toFixed(2) + '%'
 }
 
+/**
+ * Convert an ISO timestamp into a compact local time string for the footer.
+ */
 function formatUpdateTime(isoStr) {
   if (!isoStr) return ''
   try {
@@ -102,6 +127,12 @@ function getChangeColor(percentStr) {
   return COLOR_NEUTRAL
 }
 
+/**
+ * Build one swiper page worth of widget references.
+ *
+ * When VIEW_CONTAINER is unavailable on a device/runtime combination, the
+ * function falls back to absolute widget placement via createPageWidgetsFallback.
+ */
 function createPageWidgets(pageIndex) {
   const widgets = {}
 
@@ -200,7 +231,7 @@ function createPageWidgets(pageIndex) {
   return widgets
 }
 
-// Fallback: direct widget placement at y-offset (if VIEW_CONTAINER unavailable)
+// Fallback path for runtimes where VIEW_CONTAINER cannot host page-local widgets.
 function createPageWidgetsFallback(pageIndex) {
   const yOffset = pageIndex * DEVICE_HEIGHT
   const widgets = {}
@@ -303,13 +334,16 @@ function getPriceArrow(direction) {
 }
 
 function flashUpdateWidget(w) {
-  // Flash: set bright white immediately, revert to gray after delay
+  // A short flash makes periodic updates noticeable without redrawing the page.
   w.setProperty(prop.COLOR, COLOR_UPDATE_FLASH)
   setTimeout(() => {
     w.setProperty(prop.COLOR, COLOR_UPDATE_NORMAL)
   }, FLASH_DURATION)
 }
 
+/**
+ * Apply one pair payload onto an already-created widget set.
+ */
 function updatePageData(widgets, pairData, lastUpdate) {
   if (!pairData) return
 
@@ -344,16 +378,18 @@ Page(
     build() {
       logger.log('page build start')
 
-      // setupUI must run synchronously (setScrollMode requirement)
+      // setupUI must run before any async call because swiper mode is configured
+      // only once during page build.
       this.setupUI()
 
-      // Fetch settings async — saves to localStorage for next launch, updates labels this session
+      // Settings are fetched after the first paint so startup stays responsive.
       this.fetchSettings()
 
-      // Fetch prices immediately (don't wait for fetchSettings to complete)
+      // Prices can be requested immediately. If settings arrive later, pages are
+      // updated again with the new symbol order.
       this.fetchPrices()
 
-      // Start auto-refresh
+      // Keep the page current while the user stays on it.
       this.startAutoRefresh()
     },
 
@@ -377,8 +413,8 @@ Page(
       }
 
       if (activeSymbols.length === 0) {
-        // All currencies deselected — clear page content but keep page references
-        // (the swiper cannot be reconfigured at runtime)
+        // Keep the existing page references alive even when no symbols are
+        // active, because the swiper cannot be reconfigured at runtime.
         pageWidgets.forEach((w) => {
           w.symbol.setProperty(prop.TEXT, '')
           w.price.setProperty(prop.TEXT, '')
@@ -397,14 +433,13 @@ Page(
       }
 
       if (pageWidgets.length === 0) {
-        // No swiper was configured yet (first launch with no saved symbols).
-        // This is the only time we may call setupUI after build().
+        // This only happens on first launch when no local symbols existed yet.
+        // In that case we can still build the swiper once with the new count.
         uiBuilt = false
         this.setupUI()
       } else {
-        // Swiper already configured — update existing pages in-place.
-        // setScrollMode(SCROLL_MODE_SWIPER) cannot be called again at runtime,
-        // so the total page count stays fixed for this session.
+        // Swiper already configured: reuse existing page widgets and clear any
+        // slots that no longer map to an active symbol.
         const displayCount = Math.min(activeSymbols.length, pageWidgets.length)
 
         for (let i = 0; i < displayCount; i++) {
@@ -420,7 +455,7 @@ Page(
           pageWidgets[i].updateTime.setProperty(prop.TEXT, '')
         }
 
-        // Clear excess pages when count decreased
+        // Clear excess pages when count decreased for this session.
         for (let i = displayCount; i < pageWidgets.length; i++) {
           pageWidgets[i].symbol.setProperty(prop.TEXT, '')
           pageWidgets[i].price.setProperty(prop.TEXT, '')
@@ -443,6 +478,8 @@ Page(
             if (data && data.result && data.result.symbols && data.result.symbols.length > 0) {
               this.applySymbols(data.result.symbols)
             } else {
+              // Fall back to the watch-local symbol cache when the companion app
+              // has not saved any preference yet.
               this.fetchPrices()
             }
           })
@@ -462,6 +499,7 @@ Page(
 
       const count = activeSymbols.length
       if (count === 0) {
+        // First-run empty state before the user enables symbols in the phone app.
         emptyStateWidget = createWidget(widget.TEXT, {
           x: px(0),
           y: px(Math.floor(DEVICE_HEIGHT / 2) - px(30)),
@@ -486,7 +524,7 @@ Page(
 
       logger.log('setupUI: count=' + count + ' height=' + DEVICE_HEIGHT)
 
-      // Set up vertical swiper — snaps to full-screen pages
+      // Use one full-screen page per tracked symbol.
       setScrollMode({
         mode: SCROLL_MODE_SWIPER,
         options: {
@@ -495,12 +533,13 @@ Page(
         }
       })
 
-      // Create widget pages
+      // Pre-create all widgets once, then update properties as data changes.
       pageWidgets = []
       for (let i = 0; i < count; i++) {
         const widgets = createPageWidgets(i)
 
-        // Show symbol name placeholder right away
+        // Show the symbol immediately so the page does not look empty while
+        // waiting for the first network response.
         widgets.symbol.setProperty(prop.TEXT, activeSymbols[i])
         widgets.price.setProperty(prop.TEXT, 'Loading...')
 
@@ -531,6 +570,7 @@ Page(
     updateAllPages() {
       if (!pricesData || !pricesData.pairs) return
 
+      // Each visible page maps to the symbol at the same index in activeSymbols.
       activeSymbols.forEach((symbol, idx) => {
         if (idx < pageWidgets.length) {
           const pairData = pricesData.pairs[symbol]
@@ -545,6 +585,7 @@ Page(
       if (refreshTimer) {
         clearInterval(refreshTimer)
       }
+      // Refresh is page-scoped so it can be torn down cleanly in onDestroy().
       refreshTimer = setInterval(() => {
         logger.log('auto-refresh tick')
         this.fetchPrices()
