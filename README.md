@@ -68,7 +68,7 @@ The app follows the Zepp OS Mini Program architecture:
 
 - Watch UI is built with Zepp widget APIs, not HTML or CSS.
 - Network requests belong in `forex-ticker/app-side/index.js`, not in watch-side page code.
-- The page count for the vertical swiper is fixed when the UI is built, so symbol changes update existing pages in-place during the current session.
+- When the tracked symbol list changes at runtime, the watch page tears down and rebuilds the swiper to match the new selection.
 - Layout constants are split by device shape: round (`index.r.layout.js`) and square (`index.s.layout.js`).
 
 ## Getting Started

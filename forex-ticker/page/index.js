@@ -5,9 +5,10 @@
  * the current symbol list, requesting market data from the app-side service,
  * and refreshing widgets when new data arrives.
  *
- * Important runtime constraint: the swiper page count can only be configured
- * when the UI is built, so symbol changes later in the session reuse or clear
- * existing pages instead of rebuilding the scroll mode from scratch.
+ * When the tracked symbol list changes at runtime (e.g. via a companion
+ * settings push), destroyUI() tears down every widget and resets page state,
+ * then setupUI() recreates the swiper with the correct page count.  This
+ * ensures the number of swiper pages always matches the active selection.
  */
 import { createWidget, deleteWidget, widget, align, text_style, prop } from '@zos/ui'
 import { setScrollMode, SCROLL_MODE_SWIPER } from '@zos/page'
