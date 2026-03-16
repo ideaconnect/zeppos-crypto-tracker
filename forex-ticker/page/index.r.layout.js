@@ -62,3 +62,13 @@ export const LOADING_STYLE = {
   color: 0x888888,
   text_size: px(28),
 }
+
+// Page position indicator (e.g. "1/8") in top-right corner.
+export const PAGE_INDICATOR_STYLE = {
+  x: px(380),
+  y: px(8),
+  w: px(90),
+  h: px(24),
+  color: 0x666666,
+  text_size: px(18),
+}

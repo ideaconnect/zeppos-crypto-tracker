@@ -10,41 +10,37 @@
  */
 import { BaseSideService } from '@zeppos/zml/base-side'
 
-const PRICES_URL = 'https://crypto-tracker.idct.tech/prices.json'
+import { DEFAULT_SYMBOLS } from '../shared/symbols'
 
-// Companion defaults exist mainly for first-run settings hydration.
-const DEFAULT_SYMBOLS = [
-  'BTCUSDT',
-  'ETHUSDT',
-  'BNBUSDT',
-  'ADAUSDT',
-  'DOGEUSDT',
-  'SOLUSDT',
-  'TRXUSDT',
-  'XRPUSDT'
-];
+// Single source for the price-data endpoint.
+// Edit this line to point at a dev/staging server during development.
+const PRICES_URL = 'https://crypto-tracker.idct.tech/prices.json'
 
 /**
  * Fetch the latest aggregated market payload and return it through the
  * Zepp side-service callback contract.
  */
 async function fetchPrices(ctx, res) {
+  let response
   try {
-    // App-side fetch is available in this runtime even though watch-side code
-    // cannot use browser or Node APIs.
-    const response = await fetch({
+    response = await fetch({
       url: PRICES_URL,
       method: 'GET'
     })
+  } catch (error) {
+    console.log('fetchPrices network error: ' + error)
+    res(null, { result: null, error: 'FETCH_FAILED' })
+    return
+  }
 
+  try {
     const body = typeof response.body === 'string'
       ? JSON.parse(response.body)
       : response.body
-
     res(null, { result: body })
   } catch (error) {
-    console.log('fetchPrices error: ' + error)
-    res(null, { result: null, error: 'FETCH_FAILED' })
+    console.log('fetchPrices parse error: ' + error)
+    res(null, { result: null, error: 'PARSE_ERROR' })
   }
 }
 

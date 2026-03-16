@@ -22,7 +22,8 @@ import {
   SYMBOL_STYLE,
   PRICE_STYLE,
   CHANGE_LABEL_STYLE,
-  UPDATE_STYLE
+  UPDATE_STYLE,
+  PAGE_INDICATOR_STYLE,
 } from 'zosLoader:./index.[pf].layout.js'
 
 const logger = Logger.getLogger('crypto-ticker')
@@ -37,14 +38,20 @@ const TIMEFRAME_LABELS = {
   '7d': '7d'
 }
 
-const COLOR_GREEN = 0x00E676
-const COLOR_RED = 0xFF5252
-const COLOR_NEUTRAL = 0xAAAAAA
-const COLOR_UPDATE_FLASH = 0xFFFFFF
-const COLOR_UPDATE_NORMAL = 0x888888
-const REFRESH_INTERVAL = 10000 // 10 seconds
-const FLASH_DURATION = 1200 // ms to show flash color
-const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'DOGEUSDT', 'SOLUSDT', 'TRXUSDT', 'XRPUSDT']
+// Centralised display / timing configuration.
+// Adjust values here instead of hunting through widget code.
+const CONFIG = {
+  COLOR_GREEN:        0x00E676,
+  COLOR_RED:          0xFF5252,
+  COLOR_NEUTRAL:      0xAAAAAA,
+  COLOR_UPDATE_FLASH: 0xFFFFFF,
+  COLOR_UPDATE_NORMAL:0x888888,
+  REFRESH_INTERVAL:   10000,  // ms between auto-refresh ticks
+  FLASH_DURATION:     1200,   // ms to flash the update-time widget
+  STALE_THRESHOLD:    30000,  // ms before data is considered stale
+}
+
+import { DEFAULT_SYMBOLS } from '../shared/symbols'
 
 /**
  * Read the last symbol list saved on the watch.
@@ -71,13 +78,17 @@ let emptyStateWidget = null
 let refreshTimer = null
 let pricesData = null
 let uiBuilt = false
+let flashTimers = []
+let lastSuccessTime = 0
+let networkErrorActive = false
 
 /**
  * Format a stringified price into a compact, watch-friendly display value.
  */
 function formatPrice(priceStr) {
+  if (priceStr == null) return 'N/A'
   const num = parseFloat(priceStr)
-  if (isNaN(num)) return priceStr
+  if (isNaN(num)) return 'N/A'
 
   let formatted
   if (num >= 1000) {
@@ -99,8 +110,9 @@ function formatPrice(priceStr) {
  * Format a percentage string with a stable sign and fixed precision.
  */
 function formatPercent(percentStr) {
+  if (percentStr == null) return 'N/A'
   const num = parseFloat(percentStr)
-  if (isNaN(num)) return percentStr
+  if (isNaN(num)) return 'N/A'
   const sign = num >= 0 ? '+' : ''
   return sign + num.toFixed(2) + '%'
 }
@@ -111,8 +123,8 @@ function formatPercent(percentStr) {
 function formatUpdateTime(isoStr) {
   if (!isoStr) return ''
   try {
-    // Parse ISO string and format simply
     const d = new Date(isoStr)
+    if (isNaN(d.getTime())) return ''
     const pad = (n) => (n < 10 ? '0' : '') + n
     return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) +
       ' ' + pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear()
@@ -123,9 +135,9 @@ function formatUpdateTime(isoStr) {
 
 function getChangeColor(percentStr) {
   const num = parseFloat(percentStr)
-  if (num > 0) return COLOR_GREEN
-  if (num < 0) return COLOR_RED
-  return COLOR_NEUTRAL
+  if (num > 0) return CONFIG.COLOR_GREEN
+  if (num < 0) return CONFIG.COLOR_RED
+  return CONFIG.COLOR_NEUTRAL
 }
 
 /**
@@ -207,7 +219,7 @@ function createPageWidgets(pageIndex) {
       y: rowY,
       w: CHANGE_LABEL_STYLE.value_w,
       h: CHANGE_LABEL_STYLE.row_height,
-      color: COLOR_NEUTRAL,
+      color: CONFIG.COLOR_NEUTRAL,
       text_size: CHANGE_LABEL_STYLE.text_size,
       align_h: align.LEFT,
       align_v: align.CENTER_V,
@@ -227,6 +239,20 @@ function createPageWidgets(pageIndex) {
     color: UPDATE_STYLE.color,
     text_size: UPDATE_STYLE.text_size,
     align_h: align.CENTER_H,
+    align_v: align.CENTER_V,
+    text_style: text_style.NONE,
+    text: ''
+  })
+
+  // 5) Page position indicator (e.g. "1/8")
+  widgets.pageIndicator = vc.createWidget(widget.TEXT, {
+    x: PAGE_INDICATOR_STYLE.x,
+    y: PAGE_INDICATOR_STYLE.y,
+    w: PAGE_INDICATOR_STYLE.w,
+    h: PAGE_INDICATOR_STYLE.h,
+    color: PAGE_INDICATOR_STYLE.color,
+    text_size: PAGE_INDICATOR_STYLE.text_size,
+    align_h: align.RIGHT,
     align_v: align.CENTER_V,
     text_style: text_style.NONE,
     text: ''
@@ -288,7 +314,7 @@ function createPageWidgetsFallback(pageIndex) {
       y: rowY,
       w: CHANGE_LABEL_STYLE.value_w,
       h: CHANGE_LABEL_STYLE.row_height,
-      color: COLOR_NEUTRAL,
+      color: CONFIG.COLOR_NEUTRAL,
       text_size: CHANGE_LABEL_STYLE.text_size,
       align_h: align.LEFT,
       align_v: align.CENTER_V,
@@ -312,6 +338,19 @@ function createPageWidgetsFallback(pageIndex) {
     text: ''
   })
 
+  widgets.pageIndicator = createWidget(widget.TEXT, {
+    x: PAGE_INDICATOR_STYLE.x,
+    y: PAGE_INDICATOR_STYLE.y + yOffset,
+    w: PAGE_INDICATOR_STYLE.w,
+    h: PAGE_INDICATOR_STYLE.h,
+    color: PAGE_INDICATOR_STYLE.color,
+    text_size: PAGE_INDICATOR_STYLE.text_size,
+    align_h: align.RIGHT,
+    align_v: align.CENTER_V,
+    text_style: text_style.NONE,
+    text: ''
+  })
+
   return widgets
 }
 
@@ -325,6 +364,7 @@ function destroyUI() {
     deleteWidget(w.symbol)
     deleteWidget(w.price)
     deleteWidget(w.updateTime)
+    if (w.pageIndicator) deleteWidget(w.pageIndicator)
     w.changes.forEach(({ label, value }) => {
       deleteWidget(label)
       deleteWidget(value)
@@ -352,8 +392,8 @@ function getPriceDirection(currentStr, previousStr) {
 }
 
 function getPriceColor(direction) {
-  if (direction > 0) return COLOR_GREEN
-  if (direction < 0) return COLOR_RED
+  if (direction > 0) return CONFIG.COLOR_GREEN
+  if (direction < 0) return CONFIG.COLOR_RED
   return 0xFFFFFF // white when unchanged
 }
 
@@ -364,11 +404,11 @@ function getPriceArrow(direction) {
 }
 
 function flashUpdateWidget(w) {
-  // A short flash makes periodic updates noticeable without redrawing the page.
-  w.setProperty(prop.COLOR, COLOR_UPDATE_FLASH)
-  setTimeout(() => {
-    w.setProperty(prop.COLOR, COLOR_UPDATE_NORMAL)
-  }, FLASH_DURATION)
+  w.setProperty(prop.COLOR, CONFIG.COLOR_UPDATE_FLASH)
+  const timerId = setTimeout(() => {
+    w.setProperty(prop.COLOR, CONFIG.COLOR_UPDATE_NORMAL)
+  }, CONFIG.FLASH_DURATION)
+  flashTimers.push(timerId)
 }
 
 /**
@@ -393,12 +433,29 @@ function updatePageData(widgets, pairData, lastUpdate) {
       value.setProperty(prop.COLOR, getChangeColor(change.priceChangePercent))
     } else {
       value.setProperty(prop.TEXT, 'N/A')
-      value.setProperty(prop.COLOR, COLOR_NEUTRAL)
+      value.setProperty(prop.COLOR, CONFIG.COLOR_NEUTRAL)
     }
   })
 
-  widgets.updateTime.setProperty(prop.TEXT, 'Updated: ' + formatUpdateTime(lastUpdate))
+  const updateLabel = 'Updated: ' + formatUpdateTime(lastUpdate)
+  const isStale = lastSuccessTime > 0 && (Date.now() - lastSuccessTime > CONFIG.STALE_THRESHOLD)
+  widgets.updateTime.setProperty(prop.TEXT, isStale ? updateLabel + ' (stale)' : updateLabel)
+  widgets.updateTime.setProperty(prop.COLOR, isStale ? CONFIG.COLOR_RED : CONFIG.COLOR_UPDATE_NORMAL)
   flashUpdateWidget(widgets.updateTime)
+}
+
+function showNetworkErrorPage(widgets, symbol) {
+  widgets.symbol.setProperty(prop.TEXT, symbol || '---')
+  widgets.price.setProperty(prop.TEXT, '--')
+  widgets.price.setProperty(prop.COLOR, CONFIG.COLOR_NEUTRAL)
+
+  widgets.changes.forEach(({ value }) => {
+    value.setProperty(prop.TEXT, 'N/A')
+    value.setProperty(prop.COLOR, CONFIG.COLOR_NEUTRAL)
+  })
+
+  widgets.updateTime.setProperty(prop.TEXT, 'network error')
+  widgets.updateTime.setProperty(prop.COLOR, CONFIG.COLOR_RED)
 }
 
 Page(
@@ -480,8 +537,7 @@ Page(
           y: px(Math.floor(DEVICE_HEIGHT / 2) - px(30)),
           w: px(DEVICE_WIDTH),
           h: px(60),
-          color: COLOR_NEUTRAL,
-          text_size: px(18),
+          color: CONFIG.COLOR_NEUTRAL,
           align_h: align.CENTER_H,
           align_v: align.CENTER_V,
           text_style: text_style.WRAP,
@@ -517,6 +573,7 @@ Page(
         // waiting for the first network response.
         widgets.symbol.setProperty(prop.TEXT, activeSymbols[i])
         widgets.price.setProperty(prop.TEXT, 'Loading...')
+        widgets.pageIndicator.setProperty(prop.TEXT, (i + 1) + '/' + count)
 
         pageWidgets.push(widgets)
       }
@@ -529,20 +586,45 @@ Page(
         this.request({ method: 'GET_PRICES' })
           .then((data) => {
             logger.log('prices received')
-            if (data && data.result && data.result.pairs) {
-              pricesData = data.result
-              this.updateAllPages()
+            if (data && data.error) {
+              this.handlePricesError(data.error)
+              return
             }
+            if (data && data.result && data.result.pairs) {
+              networkErrorActive = false
+              pricesData = data.result
+              lastSuccessTime = Date.now()
+              this.updateAllPages()
+              return
+            }
+
+            this.handlePricesError('EMPTY_RESULT')
           })
           .catch((err) => {
-            logger.log('prices fetch failed: ' + err)
+            this.handlePricesError(err)
           })
       } catch (e) {
-        logger.log('request not available: ' + e)
+        this.handlePricesError(e)
       }
     },
 
+    handlePricesError(error) {
+      logger.log('prices fetch failed: ' + error)
+      networkErrorActive = true
+      pricesData = null
+      this.updateAllPages()
+    },
+
     updateAllPages() {
+      if (networkErrorActive) {
+        activeSymbols.forEach((symbol, idx) => {
+          if (idx < pageWidgets.length) {
+            showNetworkErrorPage(pageWidgets[idx], symbol)
+          }
+        })
+        return
+      }
+
       if (!pricesData || !pricesData.pairs) return
 
       // Each visible page maps to the symbol at the same index in activeSymbols.
@@ -564,7 +646,7 @@ Page(
       refreshTimer = setInterval(() => {
         logger.log('auto-refresh tick')
         this.fetchPrices()
-      }, REFRESH_INTERVAL)
+      }, CONFIG.REFRESH_INTERVAL)
     },
 
     onDestroy() {
@@ -573,6 +655,8 @@ Page(
         clearInterval(refreshTimer)
         refreshTimer = null
       }
+      flashTimers.forEach(id => clearTimeout(id))
+      flashTimers = []
     }
   })
 )
